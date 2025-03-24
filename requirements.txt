@@ -1,0 +1,11 @@
+flask
+flask-cors
+pandas
+numpy
+torch
+torch-geometric
+scikit-learn
+folium
+geopy
+networkx
+matplotlib

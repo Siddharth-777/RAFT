@@ -1,6 +1,5 @@
 #  RAFT : Real-time Adaptive Flow Transport 🚦
 
-
 ##  Overview 🌍
 RAFT is an AI-driven traffic management system designed to improve urban mobility in Thoothukudi. By utilizing **real-time data, predictive analytics, and edge computing**, RAFT optimizes traffic flow, reduces congestion, and enhances road safety.
 
