@@ -25,7 +25,7 @@ RAFT is an AI-driven traffic management system designed to improve urban mobilit
 ### Installation
 ```sh
 # Clone the repository
-git clone https://github.com/your-username/RAFT.git
+git clone https://github.com/Siddharth-777/RAFT.git
 cd RAFT
 
 # Install dependencies
