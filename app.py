@@ -1,493 +1,383 @@
-from flask import Flask, render_template, jsonify, request, send_file
+from flask import Flask, render_template, jsonify, request, send_from_directory
 import folium
-import math
-import sys
-import os
 import numpy as np
-from datetime import datetime, timedelta
-from math import radians, cos, sin, asin, sqrt
-import threading
-import queue
+from traffic_data import SIGNALS, EDGES, generate_traffic_data, get_emergency_priority, EMERGENCY_PRIORITIES, get_traffic_flow
+import os
 import json
+from datetime import datetime
 from werkzeug.utils import secure_filename
-from models.traffic_model import TrafficSimulation, VehicleType, SIGNALS
-from congestion.traffic_data import generate_traffic_data, get_traffic_flow
-from congestion.model import train_models, predict_and_optimize
-from sounddetection.detection import load_model, generate_spectrogram, classify_siren
-import tensorflow as tf
+import cv2
+import torch
+from PIL import Image
+import time
+from model import train_models, predict_and_optimize
 
-# Add parent directory to Python path to find sounddetection module
-parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.append(parent_dir)
+app = Flask(__name__, 
+    static_folder='static',
+    template_folder='templates'
+)
 
-try:
-    from optimization_copy.ABC import optimizeSignal
-except ImportError as e:
-    print(f"Error importing modules: {e}")
-    print("Please make sure all required packages are installed and the project structure is correct.")
-    sys.exit(1)
+# Add these configurations after app initialization
+UPLOAD_FOLDER = 'uploads'
+ALLOWED_EXTENSIONS = {'wav', 'mp3', 'mp4', 'avi', 'mov', 'jpg', 'jpeg', 'png'}
 
-app = Flask(__name__)
+app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
+app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max file size
 
-# Initialize models and simulation
-try:
-    simulation = TrafficSimulation(num_vehicles=20)
-    
-    # Track blocked roads and their durations
-    blocked_roads = {}  # Format: {road_id: {'until': datetime, 'segment': (start, end)}}
-    
-    # Track simulation statistics
-    simulation_stats = {
-        'start_time': None,
-        'total_vehicles': 0,
-        'emergency_vehicles': 0,
-        'avg_wait_time': 0,
-        'system_efficiency': 0,
-        'total_waiting_vehicles': 0,
-        'average_wait_time': 0,
-        'total_throughput': 0
-    }
-
-    # Initialize sound detection queue
-    sound_detection_queue = queue.Queue()
-    sound_detection_results = []
-    
-    # Initialize optimization results
-    optimization_results = {}
-    
-    # Initialize ML models
-    gnn_model, rl_model, env = train_models()
-
-    # Initialize sound detection with correct model path and custom objects
-    siren_model_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'sounddetection', 'siren_classifier.h5')
-    
-    # Custom layer to handle the groups parameter
-    class CustomDepthwiseConv2D(tf.keras.layers.DepthwiseConv2D):
-        def __init__(self, *args, groups=None, **kwargs):
-            super().__init__(*args, **kwargs)
-    
-    custom_objects = {
-        'DepthwiseConv2D': CustomDepthwiseConv2D
-    }
-    
-    siren_classifier = load_model(siren_model_path, custom_objects=custom_objects, compile=False)
-    
-except Exception as e:
-    print(f"Error initializing models: {e}")
-    print("Please check if all dependencies are installed correctly.")
-    sys.exit(1)
-
-# Constants for coordinate conversion
-BASE_LAT = 37.7749  # San Francisco latitude
-BASE_LON = -122.4194  # San Francisco longitude
-EARTH_RADIUS = 6371000  # Earth's radius in meters
-SCALE_FACTOR = 5  # Scale factor for screen coordinates
-
-# Sound detection configuration
-UPLOAD_FOLDER = os.path.join(os.path.dirname(__file__), "uploads")
-ALLOWED_EXTENSIONS = {'wav', 'mp3'}
-app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
+# Create uploads directory if it doesn't exist
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+os.makedirs(os.path.join(UPLOAD_FOLDER, 'processed'), exist_ok=True)
 
 def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
-def process_sound_detection():
-    """Background thread for processing sound detection"""
-    while True:
-        try:
-            filepath = sound_detection_queue.get()
-            if filepath is None:
-                break
-                
-            # Generate spectrogram
-            spectrogram_path = generate_spectrogram(filepath)
+def create_map():
+    m = folium.Map(location=[8.7833, 78.1333], zoom_start=13)  # Thoothukudi coordinates
+    
+    # Add traffic signals
+    for signal, data in SIGNALS.items():
+        # Determine color based on congestion
+        if data['congestion_factor'] > 0.7:
+            color = 'red'
+        elif data['congestion_factor'] > 0.4:
+            color = 'orange'
+        else:
+            color = 'green'
             
-            # Classify siren
-            classification = classify_siren(filepath, siren_classifier)
+        # Create custom popup with more details
+        popup_html = f"""
+            <div style='font-family: Arial, sans-serif; min-width: 200px;'>
+                <h4 style='margin: 0 0 10px 0; color: #2c3e50;'>{data['name']}</h4>
+                <div style='margin: 5px 0;'>
+                    <strong>Congestion Level:</strong>
+                    <div class="progress" style="height: 5px; margin-top: 5px;">
+                        <div class="progress-bar bg-{color}" role="progressbar" 
+                             style="width: {data['congestion_factor']*100}%"></div>
+                    </div>
+                    <small style='color: #6c757d;'>{data['congestion_factor']:.2f}</small>
+                </div>
+                <div style='margin: 5px 0;'>
+                    <strong>Signal Timing:</strong><br>
+                    <small>Green: {data['signal_timing']['green']}s | Red: {data['signal_timing']['red']}s</small>
+                </div>
+                <div style='margin: 5px 0;'>
+                    <strong>Traffic Flow:</strong><br>
+                    <small>Incoming: {data['incoming_flow']:.1f} | Outgoing: {data['outgoing_flow']:.1f}</small>
+                </div>
+                <div style='margin: 5px 0;'>
+                    <strong>Emergency Frequency:</strong><br>
+                    <small>{data['emergency_frequency']*100:.1f}%</small>
+                </div>
+                <div style='margin-top: 10px; font-size: 0.8em; color: #6c757d;'>
+                    Last Updated: {datetime.now().strftime('%H:%M:%S')}
+                </div>
+            </div>
+        """
             
-            # Store results
-            sound_detection_results.append({
-                'timestamp': datetime.now().isoformat(),
-                'filepath': filepath,
-                'spectrogram': spectrogram_path,
-                'classification': classification
-            })
-            
-            # Keep only last 10 results
-            if len(sound_detection_results) > 10:
-                sound_detection_results.pop(0)
-                
-        except Exception as e:
-            print(f"Error in sound detection: {e}")
-
-# Start sound detection thread
-sound_thread = threading.Thread(target=process_sound_detection, daemon=True)
-sound_thread.start()
-
-def screen_to_geo(x, y):
-    """Convert screen coordinates to geographical coordinates."""
-    # Calculate offsets in meters
-    x_meters = x * SCALE_FACTOR
-    y_meters = y * SCALE_FACTOR
+        folium.Marker(
+            location=data['location'],
+            popup=popup_html,
+            icon=folium.Icon(color=color, icon='info-sign')
+        ).add_to(m)
     
-    # Convert meters to degrees
-    lat_offset = y_meters / (EARTH_RADIUS * np.pi / 180)
-    lon_offset = x_meters / (EARTH_RADIUS * cos(radians(BASE_LAT)) * np.pi / 180)
+    # Add traffic flow lines between signals
+    for edge in EDGES:
+        start = SIGNALS[edge[0]]['location']
+        end = SIGNALS[edge[1]]['location']
+        folium.PolyLine(
+            locations=[start, end],
+            weight=2,
+            color='gray',
+            opacity=0.5,
+            dash_array='5'
+        ).add_to(m)
     
-    return BASE_LAT + lat_offset, BASE_LON + lon_offset
-
-def geo_to_screen(lat, lon):
-    """Convert geographical coordinates to screen coordinates."""
-    # Calculate offsets in degrees
-    lat_offset = lat - BASE_LAT
-    lon_offset = lon - BASE_LON
-    
-    # Convert degrees to meters
-    y_meters = lat_offset * EARTH_RADIUS * np.pi / 180
-    x_meters = lon_offset * EARTH_RADIUS * cos(radians(BASE_LAT)) * np.pi / 180
-    
-    # Convert meters to screen coordinates
-    x = x_meters / SCALE_FACTOR
-    y = y_meters / SCALE_FACTOR
-    
-    return x, y
-
-def update_blocked_roads():
-    """Remove expired road blocks"""
-    current_time = datetime.now()
-    expired_blocks = []
-    
-    for road_id, block_info in blocked_roads.items():
-        if block_info['until'] and block_info['until'] <= current_time:
-            simulation.unblock_road(*block_info['segment'])
-            expired_blocks.append(road_id)
-    
-    for road_id in expired_blocks:
-        del blocked_roads[road_id]
-
-def update_simulation_stats():
-    """Update simulation statistics"""
-    if simulation_stats['start_time'] is None:
-        simulation_stats['start_time'] = datetime.now()
-    
-    # Update vehicle counts
-    simulation_stats['total_vehicles'] = len(simulation.vehicles)
-    simulation_stats['emergency_vehicles'] = len([v for v in simulation.vehicles if v.vehicle_type == VehicleType.EMERGENCY])
-    
-    # Calculate average wait time
-    total_wait_time = sum(v.wait_time for v in simulation.vehicles)
-    if simulation_stats['total_vehicles'] > 0:
-        simulation_stats['avg_wait_time'] = total_wait_time / simulation_stats['total_vehicles']
-    
-    # Calculate system efficiency
-    traffic_data = generate_traffic_data()
-    total_efficiency = 0
-    for signal_data in traffic_data.values():
-        flow_ratio = signal_data['outgoing_flow'] / max(signal_data['incoming_flow'], 1)
-        congestion_factor = 1 - signal_data['congestion_factor']
-        total_efficiency += (flow_ratio + congestion_factor) / 2
-    
-    simulation_stats['system_efficiency'] = (total_efficiency / len(traffic_data)) * 100 if traffic_data else 0
+    return m._repr_html_()
 
 @app.route('/')
 def index():
-    """Render the main dashboard."""
-    return render_template('index.html')
+    try:
+        map_html = create_map()
+        return render_template('dashboard.html', map_html=map_html)
+    except Exception as e:
+        print(f"Error in index route: {str(e)}")
+        return str(e), 500
 
-@app.route('/api/upload-sound', methods=['POST'])
-def upload_sound():
-    """Handle sound file upload and detection."""
+@app.route('/get_traffic_data')
+def get_traffic_data():
+    try:
+        # Generate fresh traffic data
+        traffic_data = generate_traffic_data()
+        
+        # Calculate statistics
+        stats = {
+            'normal': 0,
+            'moderate': 0,
+            'heavy': 0
+        }
+        
+        signals = []
+        total_congestion = 0
+        
+        for signal, data in traffic_data.items():
+            # Update statistics
+            if data['congestion_factor'] > 0.7:
+                stats['heavy'] += 1
+            elif data['congestion_factor'] > 0.4:
+                stats['moderate'] += 1
+            else:
+                stats['normal'] += 1
+                
+            total_congestion += data['congestion_factor']
+            
+            # Prepare signal data with additional metrics
+            signals.append({
+                'name': data['name'],
+                'congestion_factor': data['congestion_factor'],
+                'green_time': data['signal_timing']['green'],
+                'red_time': data['signal_timing']['red'],
+                'incoming_flow': data['incoming_flow'],
+                'outgoing_flow': data['outgoing_flow'],
+                'emergency_frequency': data['emergency_frequency'],
+                'status': 'Heavy Traffic' if data['congestion_factor'] > 0.7 else 
+                         'Moderate Congestion' if data['congestion_factor'] > 0.4 else 
+                         'Normal Flow'
+            })
+        
+        # Calculate average congestion
+        avg_congestion = total_congestion / len(signals) if signals else 0
+        
+        return jsonify({
+            'stats': stats,
+            'signals': signals,
+            'avg_congestion': round(avg_congestion * 100, 2),
+            'timestamp': datetime.now().strftime('%H:%M:%S')
+        })
+    except Exception as e:
+        print(f"Error in get_traffic_data route: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/detect_emergency', methods=['POST'])
+def detect_emergency():
+    try:
+        # Get traffic data
+        traffic_data = generate_traffic_data()
+        
+        # Use the first signal as our target
+        target_signal = list(traffic_data.keys())[0]
+        signal_data = traffic_data[target_signal]
+        
+        # Get emergency frequency
+        frequency = signal_data['emergency_frequency']
+        
+        # Determine priority based on frequency
+        if frequency >= 0.7:
+            priority = 'HIGH'
+        elif frequency >= 0.4:
+            priority = 'MEDIUM'
+        else:
+            priority = 'LOW'
+            
+        # Get priority data
+        priority_data = EMERGENCY_PRIORITIES[priority]
+        
+        # Generate response and clearance times based on priority
+        response_time = np.random.randint(*priority_data['response_time'])
+        clearance_time = np.random.randint(*priority_data['clearance_time'])
+        
+        return jsonify({
+            'status': 'emergency',
+            'priority': priority,
+            'message': f'Emergency vehicle detected at {signal_data["name"]}!',
+            'response_time': f'{response_time}s',
+            'clearance_time': f'{clearance_time}s',
+            'clearance_status': f'Emergency Clearance ({priority} Priority)',
+            'signal_name': signal_data["name"],
+            'frequency': f'{frequency*100:.1f}%',
+            'congestion': f'{signal_data["congestion_factor"]*100:.1f}%',
+            'incoming_flow': f'{signal_data["incoming_flow"]:.1f}',
+            'outgoing_flow': f'{signal_data["outgoing_flow"]:.1f}'
+        })
+    except Exception as e:
+        print(f"Error in detect_emergency route: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/upload_audio', methods=['POST'])
+def upload_audio():
+    try:
+        if 'file' not in request.files:
+            return jsonify({'error': 'No file part'}), 400
+            
+        file = request.files['file']
+        if file.filename == '':
+            return jsonify({'error': 'No selected file'}), 400
+            
+        if file and allowed_file(file.filename):
+            filename = secure_filename(file.filename)
+            filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+            file.save(filepath)
+            
+            # Get traffic data for the signal
+            traffic_data = generate_traffic_data()
+            target_signal = list(traffic_data.keys())[0]
+            signal_data = traffic_data[target_signal]
+            
+            # Get current traffic conditions
+            congestion_factor = signal_data['congestion_factor']
+            incoming_flow = signal_data['incoming_flow']
+            outgoing_flow = signal_data['outgoing_flow']
+            emergency_frequency = signal_data['emergency_frequency']
+            
+            # Determine traffic status based on congestion
+            if congestion_factor > 0.7:
+                traffic_status = 'Heavy Traffic'
+            elif congestion_factor > 0.4:
+                traffic_status = 'Moderate Congestion'
+            else:
+                traffic_status = 'Normal Flow'
+            
+            # Simulate emergency detection based on traffic conditions and file size
+            # Higher chance of emergency during heavy traffic
+            emergency_threshold = 0.6 if traffic_status == 'Heavy Traffic' else 0.8
+            is_emergency = (os.path.getsize(filepath) > 100000 and 
+                          np.random.random() < emergency_threshold)
+            
+            if is_emergency:
+                # Determine priority based on traffic conditions and frequency
+                if congestion_factor > 0.7 and emergency_frequency > 0.6:
+                    priority = 'HIGH'
+                elif congestion_factor > 0.4 or emergency_frequency > 0.4:
+                    priority = 'MEDIUM'
+                else:
+                    priority = 'LOW'
+                    
+                # Get priority data
+                priority_data = EMERGENCY_PRIORITIES[priority]
+                
+                # Generate response and clearance times based on priority and traffic conditions
+                base_response_time = np.random.randint(*priority_data['response_time'])
+                base_clearance_time = np.random.randint(*priority_data['clearance_time'])
+                
+                # Adjust times based on traffic conditions
+                traffic_multiplier = 1.5 if traffic_status == 'Heavy Traffic' else 1.2
+                response_time = int(base_response_time * traffic_multiplier)
+                clearance_time = int(base_clearance_time * traffic_multiplier)
+                
+                return jsonify({
+                    'status': 'emergency',
+                    'priority': priority,
+                    'message': f'Emergency vehicle detected at {signal_data["name"]}! ({traffic_status})',
+                    'response_time': f'{response_time}s',
+                    'clearance_time': f'{clearance_time}s',
+                    'clearance_status': f'Emergency Clearance ({priority} Priority)',
+                    'signal_name': signal_data["name"],
+                    'frequency': f'{emergency_frequency*100:.1f}%',
+                    'congestion': f'{congestion_factor*100:.1f}%',
+                    'incoming_flow': f'{incoming_flow:.1f}',
+                    'outgoing_flow': f'{outgoing_flow:.1f}',
+                    'traffic_status': traffic_status
+                })
+            else:
+                return jsonify({
+                    'status': 'normal',
+                    'message': f'No emergency vehicle detected. Current traffic: {traffic_status}',
+                    'signal_name': signal_data["name"],
+                    'frequency': f'{emergency_frequency*100:.1f}%',
+                    'congestion': f'{congestion_factor*100:.1f}%',
+                    'incoming_flow': f'{incoming_flow:.1f}',
+                    'outgoing_flow': f'{outgoing_flow:.1f}',
+                    'traffic_status': traffic_status
+                })
+                
+        return jsonify({'error': 'Invalid file type'}), 400
+        
+    except Exception as e:
+        print(f"Error in upload_audio route: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/detect_vehicles', methods=['POST'])
+def detect_vehicles():
     if 'file' not in request.files:
-        return jsonify({'error': 'No file part'}), 400
+        return jsonify({'error': 'No file uploaded'})
     
     file = request.files['file']
     if file.filename == '':
-        return jsonify({'error': 'No selected file'}), 400
+        return jsonify({'error': 'No file selected'})
     
-    if file and allowed_file(file.filename):
+    if not allowed_file(file.filename):
+        return jsonify({'error': 'Invalid file type'})
+    
+    try:
+        # Save the uploaded file
         filename = secure_filename(file.filename)
         filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
         file.save(filepath)
         
-        try:
-            # Generate spectrogram
-            spectrogram_path = generate_spectrogram(filepath)
-            
-            # Classify siren
-            classification = classify_siren(filepath, siren_classifier)
-            
-            # Store result
-            result = {
-                'timestamp': datetime.now().isoformat(),
-                'filepath': filepath,
-                'spectrogram': spectrogram_path,
-                'classification': classification
-            }
-            sound_detection_results.append(result)
-            
-            # Keep only last 10 results
-            if len(sound_detection_results) > 10:
-                sound_detection_results.pop(0)
-            
-            # If emergency siren detected, add emergency vehicle
-            if classification == 'emergency_siren':
-                # Add emergency vehicle to random signal
-                target_signal = np.random.choice(list(SIGNALS.keys()))
-                simulation.add_emergency_vehicle(target_signal)
-            
-            return jsonify({
-                'success': True,
-                'spectrogram': spectrogram_path,
-                'classification': classification
-            })
-            
-        except Exception as e:
-            return jsonify({'error': str(e)}), 500
-    
-    return jsonify({'error': 'Invalid file type'}), 400
-
-@app.route('/api/sound-detection-results')
-def get_sound_detection_results():
-    """Get recent sound detection results."""
-    return jsonify(sound_detection_results)
-
-@app.route('/api/optimize-signals', methods=['POST'])
-def optimize_signals():
-    """Optimize traffic signals."""
-    try:
-        # Get optimization results
-        results = predict_and_optimize(gnn_model, rl_model, env)
+        # Read the image/video frame
+        if file.filename.lower().endswith(('.mp4', '.avi', '.mov')):
+            cap = cv2.VideoCapture(filepath)
+            ret, frame = cap.read()
+            cap.release()
+            if not ret:
+                return jsonify({'error': 'Error reading video file'})
+        else:
+            frame = cv2.imread(filepath)
+            if frame is None:
+                return jsonify({'error': 'Error reading image file'})
         
-        # Apply optimization to simulation
-        for signal_id, data in results.items():
-            signal = next((s for s in simulation.grid_network['signals'] if s.id == signal_id), None)
-            if signal:
-                signal.congestion_level = data['congestion_factor']
-                signal.cycle_time = data['traffic_data']['signal_timing']['green']
+        # Convert BGR to RGB
+        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         
-        return jsonify({'success': True})
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
-@app.route('/api/optimization-results')
-def get_optimization_results():
-    """Get latest optimization results."""
-    # Get current signal states
-    signal_states = {}
-    for signal in simulation.grid_network['signals']:
-        signal_states[signal.id] = {
-            'congestion_level': signal.congestion_level,
-            'cycle_time': signal.cycle_time,
-            'throughput': signal.calculate_throughput(),
-            'waiting_vehicles': len(signal.waiting_vehicles)
-        }
-    
-    return jsonify({
-        'timestamp': datetime.now().isoformat(),
-        'results': signal_states
-    })
-
-@app.route('/api/stats')
-def get_stats():
-    """Get current simulation statistics."""
-    update_simulation_stats()
-    return jsonify(simulation_stats)
-
-@app.route('/api/simulation-state')
-def get_simulation_state():
-    try:
-        # Update simulation and blocked roads
-        simulation.update()
-        update_blocked_roads()
-        update_simulation_stats()
+        # Perform detection
+        start_time = time.time()
+        results = yolo_model(frame_rgb)
+        processing_time = int((time.time() - start_time) * 1000)  # Convert to milliseconds
         
-        # Get vehicle positions and convert to geo coordinates
-        vehicles = []
-        for vehicle in simulation.vehicles:
-            lat, lon = screen_to_geo(vehicle.x, vehicle.y)
-            vehicles.append({
-                'id': vehicle.id,
-                'lat': float(lat),
-                'lon': float(lon),
-                'type': vehicle.vehicle_type.name,
-                'color': vehicle.color,
-                'is_emergency': vehicle.vehicle_type == VehicleType.EMERGENCY,
-                'wait_time': vehicle.wait_time,
-                'is_waiting': vehicle.is_waiting
-            })
+        # Count vehicles by type
+        cars_detected = 0
+        bikes_detected = 0
+        heavy_vehicles = 0
         
-        # Get signal states
-        signals = []
-        for signal in simulation.grid_network['signals']:
-            waiting_vehicles_count = len(signal.waiting_vehicles)
-            throughput = signal.calculate_throughput()
-            
-            signals.append({
-                'id': signal.id,
-                'position': signal.real_coords,
-                'is_green': signal.is_green,
-                'congestion_level': float(signal.congestion_level),
-                'waiting_vehicles': waiting_vehicles_count,
-                'throughput': float(throughput),
-                'cycle_time': signal.cycle_time,
-                'current_time': signal.current_time
-            })
+        for detection in results.xyxy[0]:
+            class_id = int(detection[5])
+            if class_id in [2, 3, 5, 7]:  # car, motorcycle, bus, truck
+                if class_id in [2, 3]:  # car
+                    cars_detected += 1
+                elif class_id == 3:  # motorcycle
+                    bikes_detected += 1
+                else:  # bus, truck
+                    heavy_vehicles += 1
         
-        # Update simulation statistics
-        simulation_stats.update({
-            'total_waiting_vehicles': sum(len(s.waiting_vehicles) for s in simulation.grid_network['signals']),
-            'average_wait_time': sum(v.wait_time for v in simulation.vehicles) / len(simulation.vehicles) if simulation.vehicles else 0,
-            'total_throughput': sum(s.calculate_throughput() for s in simulation.grid_network['signals'])
-        })
+        # Save the processed image
+        processed_filename = f'processed_{filename}'
+        processed_path = os.path.join(app.config['UPLOAD_FOLDER'], 'processed', processed_filename)
+        
+        # Convert the results image to PIL and save
+        results_image = Image.fromarray(results.render()[0])
+        results_image.save(processed_path)
         
         return jsonify({
-            'vehicles': vehicles,
-            'signals': signals,
-            'stats': simulation_stats,
-            'blocked_roads': [{'start': list(start), 'end': list(end)} for start, end in simulation.blocked_roads]
+            'cars_detected': cars_detected,
+            'bikes_detected': bikes_detected,
+            'heavy_vehicles': heavy_vehicles,
+            'processing_time': processing_time,
+            'output_url': f'/uploads/processed/{processed_filename}'
         })
+        
     except Exception as e:
-        print(f"Error in simulation state: {e}")
-        return jsonify({'error': str(e)}), 500
+        return jsonify({'error': str(e)})
 
-@app.route('/api/traffic-data')
-def get_traffic_data():
-    try:
-        traffic_data = generate_traffic_data()
-        return jsonify(traffic_data)
-    except Exception as e:
-        print(f"Error getting traffic data: {e}")
-        return jsonify({'error': str(e)}), 500
+@app.route('/uploads/processed/<filename>')
+def processed_file(filename):
+    return send_from_directory(os.path.join(app.config['UPLOAD_FOLDER'], 'processed'), filename)
 
-@app.route('/api/add-emergency-vehicle', methods=['POST'])
-def add_emergency_vehicle():
-    """Add an emergency vehicle to the simulation."""
-    try:
-        data = request.get_json()
-        vehicle_type = data.get('vehicle_type', 'ambulance')
-        target_signal = data.get('target_signal')
-        
-        if not target_signal:
-            return jsonify({'success': False, 'error': 'Target signal is required'})
-        
-        # Map vehicle type to VehicleType enum
-        vehicle_type_map = {
-            'ambulance': VehicleType.EMERGENCY,
-            'fire': VehicleType.EMERGENCY,
-            'police': VehicleType.EMERGENCY
-        }
-        
-        vehicle_enum = vehicle_type_map.get(vehicle_type)
-        if not vehicle_enum:
-            return jsonify({'success': False, 'error': 'Invalid vehicle type'})
-        
-        # Add emergency vehicle to simulation
-        success = simulation.add_emergency_vehicle(target_signal, vehicle_enum)
-        
-        if success:
-            return jsonify({'success': True})
-        else:
-            return jsonify({'success': False, 'error': 'Failed to add emergency vehicle'})
-            
-    except Exception as e:
-        return jsonify({'success': False, 'error': str(e)})
+# Load YOLO model
+def load_yolo_model():
+    model = torch.hub.load('ultralytics/yolov5', 'yolov5s', pretrained=True)
+    model.eval()
+    return model
 
-@app.route('/api/block-road', methods=['POST'])
-def block_road():
-    try:
-        data = request.get_json()
-        road_segment = data.get('road_segment')
-        duration = data.get('duration', -1)  # -1 means indefinite
-        
-        if road_segment is not None:
-            segments = simulation.grid_network['segments']
-            if 0 <= road_segment < len(segments):
-                segment = segments[road_segment]
-                simulation.block_road(segment['start'], segment['end'])
-                
-                # Track the block duration
-                block_until = None
-                if duration > 0:
-                    block_until = datetime.now() + timedelta(minutes=duration)
-                
-                blocked_roads[road_segment] = {
-                    'until': block_until,
-                    'segment': (segment['start'], segment['end'])
-                }
-                
-                return jsonify({'status': 'success'})
-        return jsonify({'error': 'Invalid road segment'}), 400
-    except Exception as e:
-        print(f"Error blocking road: {e}")
-        return jsonify({'error': str(e)}), 500
-
-@app.route('/api/unblock-road', methods=['POST'])
-def unblock_road():
-    try:
-        data = request.get_json()
-        road_segment = data.get('road_segment')
-        
-        if road_segment is not None:
-            segments = simulation.grid_network['segments']
-            if 0 <= road_segment < len(segments):
-                segment = segments[road_segment]
-                simulation.unblock_road(segment['start'], segment['end'])
-                
-                if road_segment in blocked_roads:
-                    del blocked_roads[road_segment]
-                
-                return jsonify({'status': 'success'})
-        return jsonify({'error': 'Invalid road segment'}), 400
-    except Exception as e:
-        print(f"Error unblocking road: {e}")
-        return jsonify({'error': str(e)}), 500
-
-@app.route('/api/reset-simulation', methods=['POST'])
-def reset_simulation():
-    try:
-        global simulation_stats, blocked_roads
-        
-        # Reset simulation
-        simulation.reset()
-        
-        # Reset statistics
-        simulation_stats = {
-            'start_time': None,
-            'total_vehicles': 0,
-            'emergency_vehicles': 0,
-            'avg_wait_time': 0,
-            'system_efficiency': 0,
-            'total_waiting_vehicles': 0,
-            'average_wait_time': 0,
-            'total_throughput': 0
-        }
-        
-        # Clear blocked roads
-        blocked_roads = {}
-        
-        return jsonify({'status': 'success'})
-    except Exception as e:
-        print(f"Error resetting simulation: {e}")
-        return jsonify({'error': str(e)}), 500
-
-@app.route('/api/update-settings', methods=['POST'])
-def update_settings():
-    try:
-        data = request.get_json()
-        vehicle_count = data.get('vehicle_count')
-        simulation_speed = data.get('simulation_speed')
-        
-        if vehicle_count is not None:
-            simulation.set_vehicle_count(int(vehicle_count))
-        
-        if simulation_speed is not None:
-            simulation.set_simulation_speed(float(simulation_speed))
-        
-        return jsonify({'status': 'success'})
-    except Exception as e:
-        print(f"Error updating settings: {e}")
-        return jsonify({'error': str(e)}), 500
+yolo_model = load_yolo_model()
 
 if __name__ == '__main__':
-    app.run(debug=True, port=5000)
+    app.run(debug=True, host='0.0.0.0', port=5001)
