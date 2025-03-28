@@ -17,14 +17,14 @@ app = Flask(__name__,
     template_folder='templates'
 )
 
-# Add these configurations after app initialization
+
 UPLOAD_FOLDER = 'uploads'
 ALLOWED_EXTENSIONS = {'wav', 'mp3', 'mp4', 'avi', 'mov', 'jpg', 'jpeg', 'png'}
 
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
-app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max file size
+app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  
 
-# Create uploads directory if it doesn't exist
+
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 os.makedirs(os.path.join(UPLOAD_FOLDER, 'processed'), exist_ok=True)
 
@@ -44,7 +44,7 @@ def create_map():
         else:
             color = 'green'
             
-        # Create custom popup with more details
+   
         popup_html = f"""
             <div style='font-family: Arial, sans-serif; min-width: 200px;'>
                 <h4 style='margin: 0 0 10px 0; color: #2c3e50;'>{data['name']}</h4>
@@ -80,7 +80,7 @@ def create_map():
             icon=folium.Icon(color=color, icon='info-sign')
         ).add_to(m)
     
-    # Add traffic flow lines between signals
+
     for edge in EDGES:
         start = SIGNALS[edge[0]]['location']
         end = SIGNALS[edge[1]]['location']
@@ -106,10 +106,10 @@ def index():
 @app.route('/get_traffic_data')
 def get_traffic_data():
     try:
-        # Generate fresh traffic data
+
         traffic_data = generate_traffic_data()
         
-        # Calculate statistics
+     
         stats = {
             'normal': 0,
             'moderate': 0,
@@ -144,7 +144,7 @@ def get_traffic_data():
                          'Normal Flow'
             })
         
-        # Calculate average congestion
+        
         avg_congestion = total_congestion / len(signals) if signals else 0
         
         return jsonify({
@@ -160,17 +160,17 @@ def get_traffic_data():
 @app.route('/detect_emergency', methods=['POST'])
 def detect_emergency():
     try:
-        # Get traffic data
+        
         traffic_data = generate_traffic_data()
         
-        # Use the first signal as our target
+
         target_signal = list(traffic_data.keys())[0]
         signal_data = traffic_data[target_signal]
         
-        # Get emergency frequency
+        
         frequency = signal_data['emergency_frequency']
         
-        # Determine priority based on frequency
+     
         if frequency >= 0.7:
             priority = 'HIGH'
         elif frequency >= 0.4:
@@ -178,10 +178,10 @@ def detect_emergency():
         else:
             priority = 'LOW'
             
-        # Get priority data
+        
         priority_data = EMERGENCY_PRIORITIES[priority]
         
-        # Generate response and clearance times based on priority
+
         response_time = np.random.randint(*priority_data['response_time'])
         clearance_time = np.random.randint(*priority_data['clearance_time'])
         
@@ -222,13 +222,13 @@ def upload_audio():
             target_signal = list(traffic_data.keys())[0]
             signal_data = traffic_data[target_signal]
             
-            # Get current traffic conditions
+            
             congestion_factor = signal_data['congestion_factor']
             incoming_flow = signal_data['incoming_flow']
             outgoing_flow = signal_data['outgoing_flow']
             emergency_frequency = signal_data['emergency_frequency']
             
-            # Determine traffic status based on congestion
+          
             if congestion_factor > 0.7:
                 traffic_status = 'Heavy Traffic'
             elif congestion_factor > 0.4:
@@ -236,14 +236,13 @@ def upload_audio():
             else:
                 traffic_status = 'Normal Flow'
             
-            # Simulate emergency detection based on traffic conditions and file size
-            # Higher chance of emergency during heavy traffic
+      
             emergency_threshold = 0.6 if traffic_status == 'Heavy Traffic' else 0.8
             is_emergency = (os.path.getsize(filepath) > 100000 and 
                           np.random.random() < emergency_threshold)
             
             if is_emergency:
-                # Determine priority based on traffic conditions and frequency
+             
                 if congestion_factor > 0.7 and emergency_frequency > 0.6:
                     priority = 'HIGH'
                 elif congestion_factor > 0.4 or emergency_frequency > 0.4:
@@ -251,14 +250,14 @@ def upload_audio():
                 else:
                     priority = 'LOW'
                     
-                # Get priority data
+               
                 priority_data = EMERGENCY_PRIORITIES[priority]
                 
-                # Generate response and clearance times based on priority and traffic conditions
+              
                 base_response_time = np.random.randint(*priority_data['response_time'])
                 base_clearance_time = np.random.randint(*priority_data['clearance_time'])
                 
-                # Adjust times based on traffic conditions
+             
                 traffic_multiplier = 1.5 if traffic_status == 'Heavy Traffic' else 1.2
                 response_time = int(base_response_time * traffic_multiplier)
                 clearance_time = int(base_clearance_time * traffic_multiplier)
@@ -308,12 +307,12 @@ def detect_vehicles():
         return jsonify({'error': 'Invalid file type'})
     
     try:
-        # Save the uploaded file
+       
         filename = secure_filename(file.filename)
         filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
         file.save(filepath)
         
-        # Read the image/video frame
+ 
         if file.filename.lower().endswith(('.mp4', '.avi', '.mov')):
             cap = cv2.VideoCapture(filepath)
             ret, frame = cap.read()
@@ -325,15 +324,15 @@ def detect_vehicles():
             if frame is None:
                 return jsonify({'error': 'Error reading image file'})
         
-        # Convert BGR to RGB
+
         frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         
-        # Perform detection
+
         start_time = time.time()
         results = yolo_model(frame_rgb)
-        processing_time = int((time.time() - start_time) * 1000)  # Convert to milliseconds
+        processing_time = int((time.time() - start_time) * 1000)  
         
-        # Count vehicles by type
+   
         cars_detected = 0
         bikes_detected = 0
         heavy_vehicles = 0
@@ -348,11 +347,11 @@ def detect_vehicles():
                 else:  # bus, truck
                     heavy_vehicles += 1
         
-        # Save the processed image
+
         processed_filename = f'processed_{filename}'
         processed_path = os.path.join(app.config['UPLOAD_FOLDER'], 'processed', processed_filename)
         
-        # Convert the results image to PIL and save
+  
         results_image = Image.fromarray(results.render()[0])
         results_image.save(processed_path)
         
