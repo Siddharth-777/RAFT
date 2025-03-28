@@ -1,0 +1,389 @@
+body {
+    background-color: #f5f5f5;
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+}
+
+.navbar {
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    background: #1a237e;
+}
+
+.navbar-brand {
+    font-weight: 600;
+    font-size: 1.4rem;
+    color: #ffffff;
+}
+
+.map-container {
+    height: 600px;
+    border-radius: 10px;
+    box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+    overflow: hidden;
+}
+
+.card {
+    border: none;
+    border-radius: 10px;
+    box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+    margin-bottom: 20px;
+}
+
+.card-header {
+    border-radius: 10px 10px 0 0 !important;
+    padding: 15px 20px;
+    background: #1a237e;
+}
+
+.card-title {
+    font-weight: 600;
+    color: #ffffff;
+}
+
+.traffic-stats {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+}
+
+.stat-item {
+    text-align: center;
+    padding: 15px;
+    background: #fff;
+    border-radius: 10px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+    transition: transform 0.2s;
+}
+
+.stat-item:hover {
+    transform: translateY(-5px);
+}
+
+.stat-item i {
+    font-size: 24px;
+    margin-bottom: 10px;
+}
+
+.stat-value {
+    font-size: 24px;
+    font-weight: 600;
+    color: #1a237e;
+    margin: 5px 0;
+}
+
+.stat-label {
+    font-size: 14px;
+    color: #666;
+}
+
+.signal-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+}
+
+.signal-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 12px;
+    background: #fff;
+    border-radius: 8px;
+    margin-bottom: 8px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+}
+
+.signal-item:last-child {
+    border-bottom: none;
+}
+
+.signal-name {
+    font-weight: 500;
+    color: #333;
+}
+
+.signal-status {
+    padding: 4px 12px;
+    border-radius: 15px;
+    font-size: 12px;
+    font-weight: 500;
+}
+
+.signal-status.normal-flow {
+    background: #e8f5e9;
+    color: #2e7d32;
+}
+
+.signal-status.moderate-congestion {
+    background: #fff3e0;
+    color: #f57c00;
+}
+
+.signal-status.heavy-traffic {
+    background: #ffebee;
+    color: #c62828;
+}
+
+/* Custom colors for traffic status */
+.bg-success {
+    background-color: #28a745 !important;
+}
+
+.bg-warning {
+    background-color: #ffc107 !important;
+}
+
+.bg-danger {
+    background-color: #dc3545 !important;
+}
+
+/* Emergency Detection Styles */
+.emergency-status {
+    margin-bottom: 1.5rem;
+}
+
+.emergency-status .alert {
+    border-radius: 8px;
+    padding: 1rem;
+}
+
+.upload-form {
+    margin-top: 20px;
+}
+
+.file-input-container {
+    border: 2px dashed #1a237e;
+    border-radius: 10px;
+    padding: 20px;
+    text-align: center;
+    margin-bottom: 15px;
+    background: #f8f9fa;
+    transition: all 0.3s;
+}
+
+.file-input-container:hover {
+    background: #e3f2fd;
+    border-color: #0d47a1;
+}
+
+.file-label {
+    cursor: pointer;
+    color: #1a237e;
+    font-weight: 500;
+}
+
+.selected-file {
+    margin-top: 10px;
+    color: #666;
+    font-size: 14px;
+}
+
+.emergency-stats {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+}
+
+.emergency-stats .stat-item {
+    display: flex;
+    align-items: center;
+    padding: 15px;
+    background: #ffffff;
+    border-radius: 10px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+    margin-bottom: 15px;
+}
+
+.emergency-stats .stat-item i {
+    font-size: 24px;
+    margin-right: 15px;
+    color: #dc3545;
+}
+
+.emergency-stats .stat-info {
+    flex: 1;
+}
+
+.emergency-stats .stat-label {
+    font-size: 14px;
+    color: #333333;
+    margin-bottom: 5px;
+}
+
+.emergency-stats .stat-value {
+    font-size: 18px;
+    font-weight: 600;
+    color: #1a237e;
+}
+
+.alert {
+    border-radius: 10px;
+    padding: 15px;
+    margin-bottom: 20px;
+    border: none;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+}
+
+.alert-danger {
+    background: #dc3545;
+    color: #ffffff;
+}
+
+.alert-warning {
+    background: #ffc107;
+    color: #000000;
+}
+
+.alert-success {
+    background: #28a745;
+    color: #ffffff;
+}
+
+.traffic-status-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 8px 16px;
+    border-radius: 20px;
+    font-weight: 500;
+    margin-top: 10px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+}
+
+.traffic-status-badge.heavy-traffic {
+    background: #dc3545;
+    color: #ffffff;
+}
+
+.traffic-status-badge.moderate-congestion {
+    background: #ffc107;
+    color: #000000;
+}
+
+.traffic-status-badge.normal-flow {
+    background: #28a745;
+    color: #ffffff;
+}
+
+.stat-card {
+    background: #ffffff;
+    border-radius: 10px;
+    padding: 20px;
+    text-align: center;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+    transition: transform 0.2s;
+}
+
+.stat-card:hover {
+    transform: translateY(-5px);
+}
+
+.stat-card i {
+    font-size: 24px;
+    color: #1a237e;
+    margin-bottom: 10px;
+}
+
+.stat-card .stat-label {
+    color: #333333;
+    font-weight: 500;
+}
+
+.stat-card .stat-value {
+    color: #1a237e;
+    font-weight: 600;
+    font-size: 20px;
+    margin-top: 5px;
+}
+
+.btn-primary {
+    background: linear-gradient(135deg, #1a237e 0%, #0d47a1 100%);
+    border: none;
+    padding: 10px 20px;
+    font-weight: 500;
+    transition: all 0.3s;
+}
+
+.btn-primary:hover {
+    background: linear-gradient(135deg, #0d47a1 0%, #1a237e 100%);
+    transform: translateY(-2px);
+    box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+}
+
+.nav-tabs {
+    border-bottom: 2px solid #dee2e6;
+    background-color: #1a237e;
+    border-radius: 10px 10px 0 0;
+    padding: 10px 10px 0 10px;
+}
+
+.nav-tabs .nav-link {
+    color: rgba(255, 255, 255, 0.7);
+    border: none;
+    padding: 10px 20px;
+    font-weight: 500;
+    transition: all 0.3s;
+    margin-right: 5px;
+    border-radius: 5px 5px 0 0;
+}
+
+.nav-tabs .nav-link.active {
+    color: #1a237e;
+    background-color: #ffffff;
+    border-bottom: none;
+}
+
+.nav-tabs .nav-link:hover {
+    color: #ffffff;
+    background-color: rgba(255, 255, 255, 0.1);
+    border-bottom: none;
+}
+
+/* Emergency Detection Tab specific style */
+#emergency-tab {
+    color: rgba(255, 255, 255, 0.7);
+}
+
+#emergency-tab.active {
+    color: #1a237e;
+    background-color: #ffffff;
+    border-bottom: none;
+}
+
+#emergency-tab:hover {
+    color: #ffffff;
+    background-color: rgba(255, 255, 255, 0.1);
+    border-bottom: none;
+}
+
+.navbar-nav .nav-link {
+    color: #ffffff;
+}
+
+.navbar-nav .nav-link:hover {
+    color: #ffffff;
+    opacity: 0.8;
+}
+
+/* Responsive adjustments */
+@media (max-width: 992px) {
+    .map-container {
+        height: 500px;
+    }
+}
+
+@media (max-width: 768px) {
+    .map-container {
+        height: 400px;
+    }
+    
+    .stat-item {
+        margin-bottom: 1rem;
+    }
+    
+    .emergency-stats {
+        gap: 0.5rem;
+    }
+}
+
+.signal-stats {
+    margin-top: 20px;
+}
