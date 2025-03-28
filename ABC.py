@@ -7,7 +7,7 @@ def optimizeSignal(signal, vehicles):
     vehicleLimit = 20
     cycles = 50
 
-    # Store traffic data dynamically
+
     trafficData = {signal: vehicles}
     signalTimers = {signal: defaultTimer}
 
